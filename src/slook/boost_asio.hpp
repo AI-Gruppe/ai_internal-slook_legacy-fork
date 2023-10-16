@@ -14,12 +14,11 @@
 namespace slook {
 
 #if __has_include(<boost/asio.hpp>)
-    using ec = boost::system::error_code;
-    namespace asio = boost::asio;
+using ec       = boost::system::error_code;
+namespace asio = boost::asio;
 #else
-    using ec = asio::error_code;
+using ec = asio::error_code;
 #endif
-
 
 struct AsioServer {
     template<typename T, std::size_t>
@@ -57,16 +56,16 @@ public:
     Lookup_t& getLookup() { return lookup; }
 
 private:
-    asio::ip::udp::endpoint multicastSendEndpoint;
-    std::vector<std::byte>         recvData;
-    bool                           sending{false};
+    asio::ip::udp::endpoint                                                 multicastSendEndpoint;
+    std::vector<std::byte>                                                  recvData;
+    bool                                                                    sending{false};
     std::vector<std::pair<asio::ip::udp::endpoint, std::vector<std::byte>>> openSendData;
 
     asio::ip::udp::endpoint lastRecvEndpoint;
 
     asio::io_service&     ioc;
     asio::ip::udp::socket socket;
-    Lookup_t                     lookup;
+    Lookup_t              lookup;
 
     void startSend() {
         sending = true;
@@ -100,15 +99,19 @@ private:
             lookup.messageCallback(
               address,
               std::span<std::byte const>{recvData.data(), bytesRecvd});
+        } else {
+            fmt::print("slook: {}\n", error.message());
         }
         recv();
     }
 
     void handle_send(ec error) {
         if(error) {
-            //TODO
+            fmt::print("slook: {}\n", error.message());
         }
+
         sending = false;
+
         if(!openSendData.empty()) {
             startSend();
         }
