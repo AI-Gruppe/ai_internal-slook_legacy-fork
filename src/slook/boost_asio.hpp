@@ -47,8 +47,9 @@ public:
         auto const mc_address = asio::ip::make_address(multicastAddress);
         socket.open(ep.protocol());
         socket.set_option(asio::socket_base::reuse_address{true});
-        socket.set_option(asio::ip::multicast::join_group{mc_address});
+        socket.set_option(asio::socket_base::broadcast{true});
         socket.bind(ep);
+        socket.set_option(asio::ip::multicast::join_group{mc_address});
         multicastSendEndpoint = asio::ip::udp::endpoint(mc_address, port);
         recv();
     }
