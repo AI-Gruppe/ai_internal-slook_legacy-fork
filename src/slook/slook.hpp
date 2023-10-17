@@ -99,7 +99,7 @@ private:
         return false;
     }
 
-    void handle(slook::IPAddress const& address, Request const& v) {
+    void handle(slook::IPAddress const&, Request const& v) {
         for(auto const& s : services) {
             if(serviceNameMatches(v.serviceName, s.name)) {
                 Response res;
