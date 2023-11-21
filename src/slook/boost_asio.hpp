@@ -34,28 +34,28 @@ public:
       std::function<void(std::optional<slook::IPAddress> const&, std::span<std::byte const>)>,
       std::function<void(slook::Service<Str, Vec> const&)>>;
 
-    AsioServer(asio::io_context& ioc_, std::uint16_t port, std::string_view multicastAddress)
+    AsioServer(
+      asio::io_context&                ioc_,
+      std::uint16_t                    port_,
+      std::string_view                 multicastAddress_,
+      std::optional<asio::ip::address> interfaceAddress_ = std::nullopt)
       : ioc{ioc_}
       , socket{ioc}
+      , port{port_}
+      , multicastAddress{std::move(multicastAddress_)}
+      , interfaceAddress{interfaceAddress_}
+      , timer{ioc}
       , lookup{
           [this](std::optional<slook::IPAddress> const& address, std::span<std::byte const> data) {
               send(address, data);
-          },
-        } {
-        auto const ep         = asio::ip::udp::endpoint(asio::ip::udp::v4(), port);
-        auto const mc_address = asio::ip::make_address(multicastAddress);
-        socket.open(ep.protocol());
-        socket.set_option(asio::socket_base::reuse_address{true});
-        socket.set_option(asio::socket_base::broadcast{true});
-        socket.bind(ep);
-        socket.set_option(asio::ip::multicast::join_group{mc_address});
-        multicastSendEndpoint = asio::ip::udp::endpoint(mc_address, port);
-        recv();
+          }} {
+        start();
     }
 
     Lookup_t& getLookup() { return lookup; }
 
 private:
+    using Clock = std::chrono::steady_clock;
     asio::ip::udp::endpoint                                                 multicastSendEndpoint;
     std::vector<std::byte>                                                  recvData;
     bool                                                                    sending{false};
@@ -63,9 +63,57 @@ private:
 
     asio::ip::udp::endpoint lastRecvEndpoint;
 
-    asio::io_service&     ioc;
-    asio::ip::udp::socket socket;
-    Lookup_t              lookup;
+    asio::io_service&                 ioc;
+    asio::ip::udp::socket             socket;
+    std::uint16_t                     port;
+    std::string                       multicastAddress;
+    std::optional<asio::ip::address>  interfaceAddress;
+    asio::basic_waitable_timer<Clock> timer;
+    Lookup_t                          lookup;
+
+    static constexpr auto TimeoutInterval = std::chrono::seconds{15};
+
+    void timeout(ec error) {
+        if(error) {
+            fmt::print("slook: {}\n", error.message());
+        }
+        fmt::print("slook: timeout restarting now\n");
+        restart();
+    }
+
+    void start() {
+        resetTimer();
+        initSocket();
+        recv();
+    }
+
+    void resetTimer() {
+        timer.expires_at(Clock::now() + TimeoutInterval);
+        timer.async_wait([this](auto error) { timeout(error); });
+    }
+
+    void initSocket() {
+        auto const ep = [&]() {
+            if(interfaceAddress) {
+                return asio::ip::udp::endpoint(*interfaceAddress, port);
+            } else {
+                return asio::ip::udp::endpoint(asio::ip::udp::v4(), port);
+            }
+        }();
+        auto const mc_address = asio::ip::make_address(multicastAddress);
+        socket.open(ep.protocol());
+        socket.set_option(asio::socket_base::reuse_address{true});
+        socket.set_option(asio::socket_base::broadcast{true});
+        socket.bind(ep);
+        socket.set_option(asio::ip::multicast::join_group{mc_address});
+        multicastSendEndpoint = asio::ip::udp::endpoint(mc_address, port);
+    }
+
+    void restart() {
+        socket.cancel();
+        socket = asio::ip::udp::socket{ioc};
+        start();
+    }
 
     void startSend() {
         sending = true;
@@ -99,18 +147,24 @@ private:
             lookup.messageCallback(
               address,
               std::span<std::byte const>{recvData.data(), bytesRecvd});
+            recv();
         } else {
-            fmt::print("slook: {}\n", error.message());
+            if(error != asio::error::operation_aborted) {
+                restart();
+                fmt::print("slook: {}\n", error.message());
+            }
         }
-        recv();
     }
 
     void handle_send(ec error) {
-        if(error) {
-            fmt::print("slook: {}\n", error.message());
-        }
-
         sending = false;
+        if(error) {
+            if(error != asio::error::operation_aborted) {
+                fmt::print("slook: {}\n", error.message());
+                restart();
+            }
+            return;
+        }
 
         if(!openSendData.empty()) {
             startSend();
