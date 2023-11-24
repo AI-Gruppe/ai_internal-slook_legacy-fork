@@ -130,7 +130,6 @@ private:
     }
 
     void handle_receive_from(ec error, std::size_t bytesRecvd) {
-        fmt::print("got data {}\n", bytesRecvd);
         if(!error) {
             slook::IPAddress address;
             if(lastRecvEndpoint.address().is_v4()) {
