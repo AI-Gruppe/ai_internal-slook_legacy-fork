@@ -8,6 +8,7 @@
     #include <asio.hpp>
 #endif
 
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -20,7 +21,7 @@ namespace asio = boost::asio;
 using ec = asio::error_code;
 #endif
 
-struct AsioServer {
+struct AsioServer : std::enable_shared_from_this<AsioServer> {
     template<typename T, std::size_t>
     using Vec = std::vector<T>;
 
@@ -48,11 +49,20 @@ public:
       , lookup{
           [this](std::optional<slook::IPAddress> const& address, std::span<std::byte const> data) {
               send(address, data);
-          }} {
-        start();
-    }
+          }} {}
 
     Lookup_t& getLookup() { return lookup; }
+
+    void start() {
+        try {
+            resetTimer();
+            initSocket();
+            recv();
+        } catch(std::exception const& e) {
+            timer.cancel();
+            fmt::print("slook: stopping now {}\n", e.what());
+        }
+    }
 
 private:
     using Clock = std::chrono::steady_clock;
@@ -74,22 +84,15 @@ private:
     static constexpr auto TimeoutInterval = std::chrono::seconds{15};
 
     void timeout(ec error) {
-        if(error) {
-            fmt::print("slook: {}\n", error.message());
+        if(error != asio::error::operation_aborted) {
+            fmt::print("slook: timeout restarting now\n");
+            restart();
         }
-        fmt::print("slook: timeout restarting now\n");
-        restart();
-    }
-
-    void start() {
-        resetTimer();
-        initSocket();
-        recv();
     }
 
     void resetTimer() {
         timer.expires_at(Clock::now() + TimeoutInterval);
-        timer.async_wait([this](auto error) { timeout(error); });
+        timer.async_wait([self = this->shared_from_this()](auto error) { self->timeout(error); });
     }
 
     void initSocket() {
@@ -120,13 +123,14 @@ private:
         socket.async_send_to(
           asio::buffer(openSendData.front().second),
           openSendData.front().first,
-          [this](auto error, auto) {
-              openSendData.erase(openSendData.begin());
-              handle_send(error);
+          [self = this->shared_from_this()](auto error, auto) {
+              self->openSendData.erase(self->openSendData.begin());
+              self->handle_send(error);
           });
     }
 
     void handle_receive_from(ec error, std::size_t bytesRecvd) {
+        fmt::print("got data {}\n", bytesRecvd);
         if(!error) {
             slook::IPAddress address;
             if(lastRecvEndpoint.address().is_v4()) {
@@ -147,6 +151,7 @@ private:
             lookup.messageCallback(
               address,
               std::span<std::byte const>{recvData.data(), bytesRecvd});
+            resetTimer();
             recv();
         } else {
             if(error != asio::error::operation_aborted) {
@@ -176,7 +181,9 @@ private:
         socket.async_receive_from(
           asio::buffer(recvData, 1024),
           lastRecvEndpoint,
-          [this](auto error, auto s) { handle_receive_from(error, s); });
+          [self = this->shared_from_this()](auto error, auto s) {
+              self->handle_receive_from(error, s);
+          });
     }
 
     void send(std::optional<slook::IPAddress> const& address, std::span<std::byte const> data) {
