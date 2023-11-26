@@ -41,7 +41,8 @@ public:
       std::string_view                 multicastAddress_,
       std::optional<asio::ip::address> interfaceAddress_ = std::nullopt)
       : ioc{ioc_}
-      , socket{ioc}
+      , send_socket{ioc}
+      , recv_socket{ioc}
       , port{port_}
       , multicastAddress{std::move(multicastAddress_)}
       , interfaceAddress{interfaceAddress_}
@@ -74,7 +75,8 @@ private:
     asio::ip::udp::endpoint lastRecvEndpoint;
 
     asio::io_service&                 ioc;
-    asio::ip::udp::socket             socket;
+    asio::ip::udp::socket             send_socket;
+    asio::ip::udp::socket             recv_socket;
     std::uint16_t                     port;
     std::string                       multicastAddress;
     std::optional<asio::ip::address>  interfaceAddress;
@@ -96,31 +98,42 @@ private:
     }
 
     void initSocket() {
-        auto const ep = [&]() {
+        auto const mc_address = asio::ip::make_address(multicastAddress);
+        auto const send_ep    = [&]() {
             if(interfaceAddress) {
                 return asio::ip::udp::endpoint(*interfaceAddress, port);
             } else {
-                return asio::ip::udp::endpoint(asio::ip::udp::v4(), port);
+                return asio::ip::udp::endpoint(mc_address, port);
             }
         }();
-        auto const mc_address = asio::ip::make_address(multicastAddress);
-        socket.open(ep.protocol());
-        socket.set_option(asio::socket_base::reuse_address{true});
-        socket.set_option(asio::socket_base::broadcast{true});
-        socket.bind(ep);
-        socket.set_option(asio::ip::multicast::join_group{mc_address});
+        send_socket.open(send_ep.protocol());
+        send_socket.set_option(asio::socket_base::reuse_address{true});
+        send_socket.set_option(asio::socket_base::broadcast{true});
+        send_socket.bind(send_ep);
+        send_socket.set_option(asio::ip::multicast::join_group{mc_address});
+
+        auto recv_ep = asio::ip::udp::endpoint(mc_address, port);
+
+        recv_socket.open(recv_ep.protocol());
+        recv_socket.set_option(asio::socket_base::reuse_address{true});
+        recv_socket.set_option(asio::socket_base::broadcast{true});
+        recv_socket.bind(recv_ep);
+        recv_socket.set_option(asio::ip::multicast::join_group{mc_address});
+
         multicastSendEndpoint = asio::ip::udp::endpoint(mc_address, port);
     }
 
     void restart() {
-        socket.cancel();
-        socket = asio::ip::udp::socket{ioc};
+        send_socket.cancel();
+        send_socket = asio::ip::udp::socket{ioc};
+        recv_socket.cancel();
+        recv_socket = asio::ip::udp::socket{ioc};
         start();
     }
 
     void startSend() {
         sending = true;
-        socket.async_send_to(
+        send_socket.async_send_to(
           asio::buffer(openSendData.front().second),
           openSendData.front().first,
           [self = this->shared_from_this()](auto error, auto) {
@@ -177,7 +190,7 @@ private:
 
     void recv() {
         recvData.resize(1024);
-        socket.async_receive_from(
+        recv_socket.async_receive_from(
           asio::buffer(recvData, 1024),
           lastRecvEndpoint,
           [self = this->shared_from_this()](auto error, auto s) {
