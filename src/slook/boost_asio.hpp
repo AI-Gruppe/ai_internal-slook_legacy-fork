@@ -99,11 +99,17 @@ private:
 
     void initSocket() {
         auto const mc_address = asio::ip::make_address(multicastAddress);
-        auto const send_ep    = [&]() {
+
+#ifdef _WIN32
+        auto const default_bind_address = asio::ip::udp::v4();
+#else
+        auto const default_bind_address = mc_address;
+#endif
+        auto const send_ep = [&]() {
             if(interfaceAddress) {
                 return asio::ip::udp::endpoint(*interfaceAddress, port);
             } else {
-                return asio::ip::udp::endpoint(mc_address, port);
+                return asio::ip::udp::endpoint(default_bind_address, port);
             }
         }();
         send_socket.open(send_ep.protocol());
@@ -112,7 +118,7 @@ private:
         send_socket.bind(send_ep);
         send_socket.set_option(asio::ip::multicast::join_group{mc_address});
 
-        auto recv_ep = asio::ip::udp::endpoint(mc_address, port);
+        auto recv_ep = asio::ip::udp::endpoint(default_bind_address, port);
 
         recv_socket.open(recv_ep.protocol());
         recv_socket.set_option(asio::socket_base::reuse_address{true});
