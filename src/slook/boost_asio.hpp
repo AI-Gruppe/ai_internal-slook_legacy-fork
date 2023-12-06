@@ -21,7 +21,8 @@ namespace asio = boost::asio;
 using ec = asio::error_code;
 #endif
 
-struct AsioServer : std::enable_shared_from_this<AsioServer> {
+template<typename Log>
+struct AsioServer : std::enable_shared_from_this<AsioServer<Log>> {
     template<typename T, std::size_t>
     using Vec = std::vector<T>;
 
@@ -61,7 +62,7 @@ public:
             recv();
         } catch(std::exception const& e) {
             timer.cancel();
-            fmt::print("slook: stopping now {}\n", e.what());
+            Log{}("slook: stopping now {}", e.what());
         }
     }
 
@@ -87,7 +88,7 @@ private:
 
     void timeout(ec error) {
         if(error != asio::error::operation_aborted) {
-            fmt::print("slook: timeout restarting now\n");
+            Log{}("slook: timeout restarting now");
             restart();
         }
     }
@@ -127,6 +128,8 @@ private:
         recv_socket.set_option(asio::ip::multicast::join_group{mc_address});
 
         multicastSendEndpoint = asio::ip::udp::endpoint(mc_address, port);
+
+        Log{}("slook: starting on {}", send_ep.address().to_string());
     }
 
     void restart() {
@@ -166,6 +169,7 @@ private:
                 });
                 address = add;
             }
+            Log{}("slook: got msg from {}",lastRecvEndpoint.address().to_string());
             lookup.messageCallback(
               address,
               std::span<std::byte const>{recvData.data(), bytesRecvd});
@@ -173,8 +177,8 @@ private:
             recv();
         } else {
             if(error != asio::error::operation_aborted) {
+                Log{}("slook: {}", error.message());
                 restart();
-                fmt::print("slook: {}\n", error.message());
             }
         }
     }
@@ -183,7 +187,7 @@ private:
         sending = false;
         if(error) {
             if(error != asio::error::operation_aborted) {
-                fmt::print("slook: {}\n", error.message());
+                Log{}("slook: {}", error.message());
                 restart();
             }
             return;
