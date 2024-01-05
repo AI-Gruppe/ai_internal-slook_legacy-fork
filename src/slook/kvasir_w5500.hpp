@@ -1,8 +1,13 @@
 #pragma once
 
+#include <kvasir/Devices/W5500.hpp>
+#include <kvasir/Util/StaticFunction.hpp>
+#include <kvasir/Util/StaticString.hpp>
+#include <kvasir/Util/StaticVector.hpp>
 #include <slook/slook.hpp>
 
 namespace slook {
+template<typename W5500, typename Clock>
 struct W5500Server {
 public:
     template<typename T, std::size_t S>
@@ -21,7 +26,7 @@ public:
       1,
       0>;
 
-    W5500Server(W5500_t& w5500_, std::uint16_t port_, ::IPAddress const& multicastAddress_)
+    W5500Server(W5500& w5500_, std::uint16_t port_, ::IPAddress const& multicastAddress_)
       : port{port_}
       , multicastAddress{multicastAddress_}
       , w5500{w5500_}
@@ -77,13 +82,13 @@ public:
     }
 
 private:
-    static constexpr auto                Timeout = std::chrono::seconds{5};
-    std::uint16_t                        port;
-    ::IPAddress                          multicastAddress;
-    W5500_t&                             w5500;
-    Lookup_t                             lookup;
-    Kvasir::StaticVector<std::byte, 512> recvBuffer;
-    std::optional<W5500_t::UDPSocket>    socket;
-    Clock::time_point                    lastMsg;
+    static constexpr auto                    Timeout = std::chrono::seconds{5};
+    std::uint16_t                            port;
+    ::IPAddress                              multicastAddress;
+    W5500&                                   w5500;
+    Lookup_t                                 lookup;
+    Kvasir::StaticVector<std::byte, 512>     recvBuffer;
+    std::optional<typename W5500::UDPSocket> socket;
+    Clock::time_point                        lastMsg;
 };
 }   // namespace slook

@@ -2,6 +2,7 @@
 
 #include <aglio/type_descriptor.hpp>
 #include <array>
+#include <cassert>
 #include <cstdint>
 #include <variant>
 
