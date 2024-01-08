@@ -8,7 +8,10 @@
     #include <asio.hpp>
 #endif
 
+#include <map>
 #include <memory>
+#include <regex>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -29,12 +32,15 @@ struct AsioServer : std::enable_shared_from_this<AsioServer<Log>> {
     template<std::size_t S>
     using Str = std::string;
 
-public:
+private:
     using Lookup_t = slook::Lookup<
       Vec,
       Str,
       std::function<void(std::optional<slook::IPAddress> const&, std::span<std::byte const>)>,
       std::function<void(slook::Service<Str, Vec> const&)>>;
+
+public:
+    using Service = Lookup_t::Service;
 
     AsioServer(
       asio::io_context&                ioc_,
@@ -53,7 +59,12 @@ public:
               send(address, data);
           }} {}
 
-    Lookup_t& getLookup() { return lookup; }
+    void addService(Service const& new_service) { lookup.addService(new_service); }
+
+    template<typename Cb>
+    void findServices(std::string_view name, Cb&& cb) {
+        lookup.findServices(name, std::forward<Cb>(cb));
+    }
 
     void start() {
         try {
@@ -113,19 +124,27 @@ private:
                 return asio::ip::udp::endpoint(default_bind_address, port);
             }
         }();
+
         send_socket.open(send_ep.protocol());
-        send_socket.set_option(asio::socket_base::reuse_address{true});
-        send_socket.set_option(asio::socket_base::broadcast{true});
-        send_socket.bind(send_ep);
-        send_socket.set_option(asio::ip::multicast::join_group{mc_address});
+        if(interfaceAddress) {
+            send_socket.set_option(
+              asio::ip::multicast::outbound_interface(interfaceAddress->to_v4()));
+        }
+        send_socket.set_option(asio::ip::multicast::enable_loopback(true));
 
         auto recv_ep = asio::ip::udp::endpoint(default_bind_address, port);
 
         recv_socket.open(recv_ep.protocol());
+
         recv_socket.set_option(asio::socket_base::reuse_address{true});
         recv_socket.set_option(asio::socket_base::broadcast{true});
+        if(interfaceAddress) {
+            recv_socket.set_option(
+              asio::ip::multicast::join_group{mc_address.to_v4(), interfaceAddress->to_v4()});
+        } else {
+            recv_socket.set_option(asio::ip::multicast::join_group{mc_address});
+        }
         recv_socket.bind(recv_ep);
-        recv_socket.set_option(asio::ip::multicast::join_group{mc_address});
 
         multicastSendEndpoint = asio::ip::udp::endpoint(mc_address, port);
 
@@ -169,7 +188,6 @@ private:
                 });
                 address = add;
             }
-            Log{}("slook: got msg from {}",lastRecvEndpoint.address().to_string());
             lookup.messageCallback(
               address,
               std::span<std::byte const>{recvData.data(), bytesRecvd});
@@ -252,4 +270,110 @@ private:
         }
     }
 };
+
+template<typename Log>
+struct MultiInterfaceAsioServer : std::enable_shared_from_this<MultiInterfaceAsioServer<Log>> {
+private:
+    using Server_t = AsioServer<Log>;
+
+public:
+    using Service = Server_t::Service;
+
+    MultiInterfaceAsioServer(
+      asio::io_context& ioc_,
+      std::uint16_t     port_,
+      std::string_view  multicastAddress_)
+      : ioc{ioc_}
+      , port{port_}
+      , multicastAddress{multicastAddress_}
+      , resolveTimer{ioc}
+      , resolver{ioc} {}
+
+    void addService(Service const& new_service) {
+        for(auto& server : servers) {
+            auto s = server.second.lock();
+            if(s) {
+                s->addService(new_service);
+            }
+        }
+        services.push_back(new_service);
+    }
+
+    template<typename Cb>
+    void findServices(std::string_view name, Cb&& cb) {
+        for(auto& server : servers) {
+            auto s = server.second.lock();
+            if(s) {
+                s->findServices(name, cb);
+            }
+        }
+    }
+
+    void start() { resolveAndAdd(); }
+
+private:
+    using Clock = std::chrono::steady_clock;
+    asio::io_service&                              ioc;
+    std::uint16_t                                  port;
+    std::string                                    multicastAddress;
+    asio::basic_waitable_timer<Clock>              resolveTimer;
+    boost::asio::ip::tcp::resolver                 resolver;
+    std::set<Service>                              services;
+    std::map<std::string, std::weak_ptr<Server_t>> servers;
+
+    static constexpr auto ResolveInterval = std::chrono::seconds{5};
+
+    void resolveAndAdd() {
+        boost::asio::ip::tcp::resolver::query query(boost::asio::ip::host_name(), "");
+
+        resolver.async_resolve(query, [self = this->shared_from_this()](auto error, auto endpoints) {
+            std::regex const ipv4Regex{
+              R"(^(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$)"};
+
+            std::vector<boost::asio::ip::address> interfaces{};
+            if(error) {
+                Log{}("slook error: resolve failed {}", error.message());
+            } else {
+                for(auto const& endpoint : endpoints) {
+                    std::string ip = endpoint.endpoint().address().to_string();
+                    if(
+                      !endpoint.endpoint().address().is_loopback()
+                      && endpoint.endpoint().address().is_v4() && std::regex_match(ip, ipv4Regex))
+                    {
+                        interfaces.push_back(endpoint.endpoint().address());
+                    }
+                }
+            }
+
+            for(auto const& interface : interfaces) {
+                if(!self->servers.contains(interface.to_string())) {
+                    auto slookServer = std::make_shared<Server_t>(
+                      self->ioc,
+                      self->port,
+                      self->multicastAddress,
+                      interface);
+                    slookServer->start();
+                    for(auto const& service : self->services) {
+                        slookServer->addService(service);
+                    }
+                    self->servers[interface.to_string()] = slookServer;
+                }
+            }
+
+            std::erase_if(self->servers, [](auto const& slookServer) {
+                return slookServer.second.expired();
+            });
+
+            self->resolveTimer.expires_at(Clock::now() + ResolveInterval);
+            self->resolveTimer.async_wait([innerSelf = self->shared_from_this()](auto ec1) {
+                if(!ec1) {
+                    innerSelf->resolveAndAdd();
+                } else {
+                    Log{}("slook error: {}", ec1.message());
+                }
+            });
+        });
+    }
+};
+
 }   // namespace slook
