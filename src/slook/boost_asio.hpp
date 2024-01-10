@@ -326,20 +326,20 @@ private:
     std::uint16_t                                  port;
     std::string                                    multicastAddress;
     asio::basic_waitable_timer<Clock>              resolveTimer;
-    boost::asio::ip::tcp::resolver                 resolver;
+    asio::ip::tcp::resolver                        resolver;
     std::set<Service>                              services;
     std::map<std::string, std::weak_ptr<Server_t>> servers;
 
     static constexpr auto ResolveInterval = std::chrono::seconds{5};
 
     void resolveAndAdd() {
-        boost::asio::ip::tcp::resolver::query query(boost::asio::ip::host_name(), "");
+        asio::ip::tcp::resolver::query query(asio::ip::host_name(), "");
 
         resolver.async_resolve(query, [self = this->shared_from_this()](auto error, auto endpoints) {
             std::regex const ipv4Regex{
               R"(^(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$)"};
 
-            std::vector<boost::asio::ip::address> interfaces{};
+            std::vector<asio::ip::address> interfaces{};
             if(error) {
                 Log{}("slook error: resolve failed {}", error.message());
             } else {
