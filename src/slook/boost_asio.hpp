@@ -311,6 +311,15 @@ public:
 
     void start() { resolveAndAdd(); }
 
+    std::vector<std::string> interfaceIps() const {
+        std::vector<std::string> ips;
+        ips.reserve(servers.size());
+        for(auto const& [ip, s] : servers) {
+            ips.push_back(ip);
+        }
+        return ips;
+    }
+
 private:
     using Clock = std::chrono::steady_clock;
     asio::io_service&                              ioc;
