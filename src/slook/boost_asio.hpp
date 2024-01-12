@@ -24,8 +24,8 @@ namespace asio = boost::asio;
 using ec = asio::error_code;
 #endif
 
-template<typename Log>
-struct AsioServer : std::enable_shared_from_this<AsioServer<Log>> {
+template<typename Log, typename Packager>
+struct AsioServer : std::enable_shared_from_this<AsioServer<Log, Packager>> {
     template<typename T, std::size_t>
     using Vec = std::vector<T>;
 
@@ -36,6 +36,7 @@ private:
     using Lookup_t = slook::Lookup<
       Vec,
       Str,
+      Packager,
       std::function<void(std::optional<slook::IPAddress> const&, std::span<std::byte const>)>,
       std::function<void(slook::Service<Str, Vec> const&)>>;
 
@@ -271,10 +272,11 @@ private:
     }
 };
 
-template<typename Log>
-struct MultiInterfaceAsioServer : std::enable_shared_from_this<MultiInterfaceAsioServer<Log>> {
+template<typename Log, typename Packager>
+struct MultiInterfaceAsioServer
+  : std::enable_shared_from_this<MultiInterfaceAsioServer<Log, Packager>> {
 private:
-    using Server_t = AsioServer<Log>;
+    using Server_t = AsioServer<Log, Packager>;
 
 public:
     using Service = Server_t::Service;
