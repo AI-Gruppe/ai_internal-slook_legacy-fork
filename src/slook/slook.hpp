@@ -14,6 +14,7 @@ template<
   typename Vector,
   template<std::size_t>
   typename String,
+  typename Packager,
   typename SendFunction,
   typename ServiceCallback,
   std::size_t MaxServices  = 2,
@@ -29,10 +30,11 @@ struct Lookup {
       : sendFunction{std::forward<SendFunction_>(sendFunction_)} {}
 
     void messageCallback(slook::IPAddress const& address, std::span<std::byte const> data) {
-        auto const p = packager::unpack<CommandSet>(data);
+        CommandSet command;
+        auto const ec = Packager::template unpack(data, command);
 
-        if(p) {
-            std::visit([&](auto const& v) { handle(address, v); }, *p);
+        if(ec.has_value()) {
+            std::visit([&](auto const& v) { handle(address, v); }, command);
         }
     }
 
@@ -73,7 +75,6 @@ struct Lookup {
     }
 
 private:
-    using packager = aglio::Packager<aglio::IPConfig>;
     SendFunction                 sendFunction;
     Vector<Service, MaxServices> services;
 
@@ -82,7 +83,7 @@ private:
     template<typename T>
     void send(std::optional<slook::IPAddress> const& address, T const& v) {
         Vector<std::byte, 1024> buffer;
-        packager::pack(buffer, CommandSet{v});
+        Packager::template pack(buffer, CommandSet{v});
         sendFunction(address, buffer);
     }
 
