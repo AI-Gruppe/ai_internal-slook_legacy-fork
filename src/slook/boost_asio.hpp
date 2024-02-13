@@ -298,7 +298,7 @@ public:
                 s->addService(new_service);
             }
         }
-        services.push_back(new_service);
+        services.insert(new_service);
     }
 
     template<typename Cb>
