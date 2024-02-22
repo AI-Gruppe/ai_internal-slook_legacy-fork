@@ -15,6 +15,11 @@
 #include <string>
 #include <vector>
 
+#ifdef __linux__
+    #include <ifaddrs.h>
+    #include <sys/types.h>
+#endif
+
 namespace slook {
 
 #if __has_include(<boost/asio.hpp>)
@@ -334,6 +339,30 @@ private:
 
     static constexpr auto ResolveInterval = std::chrono::seconds{5};
 
+#ifdef __linux__
+    static std::vector<asio::ip::address> linuxGetInterfaceIps() {
+        std::vector<asio::ip::address> ret;
+        ifaddrs*                       ifaddr;
+
+        if(getifaddrs(&ifaddr) == -1) {
+            Log{}("getifaddrs failed");
+            return ret;
+        }
+
+        for(ifaddrs* ifa = ifaddr; ifa != nullptr; ifa = ifa->ifa_next) {
+            if(ifa->ifa_addr == nullptr || ifa->ifa_addr->sa_family != AF_INET) {
+                continue;
+            }
+            auto ipv4sockaddr = reinterpret_cast<sockaddr_in*>(ifa->ifa_addr);
+            auto ipv4addr     = asio::ip::address_v4(htonl(ipv4sockaddr->sin_addr.s_addr));
+            ret.push_back(ipv4addr);
+        }
+
+        freeifaddrs(ifaddr);
+        return ret;
+    }
+#endif
+
     void resolveAndAdd() {
         asio::ip::tcp::resolver::query query(asio::ip::host_name(), "");
 
@@ -341,7 +370,7 @@ private:
             std::regex const ipv4Regex{
               R"(^(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$)"};
 
-            std::vector<asio::ip::address> interfaces{};
+            std::set<asio::ip::address> interfaces{};
             if(error) {
                 Log{}("slook error: resolve failed {}", error.message());
             } else {
@@ -351,10 +380,21 @@ private:
                       !endpoint.endpoint().address().is_loopback()
                       && endpoint.endpoint().address().is_v4() && std::regex_match(ip, ipv4Regex))
                     {
-                        interfaces.push_back(endpoint.endpoint().address());
+                        interfaces.insert(endpoint.endpoint().address());
                     }
                 }
             }
+
+#ifdef __linux__
+            auto const fallbackInterfaces = linuxGetInterfaceIps();
+            for(auto const& interface : fallbackInterfaces) {
+                std::string ip = interface.to_string();
+                if(!interface.is_loopback() && interface.is_v4() && std::regex_match(ip, ipv4Regex))
+                {
+                    interfaces.insert(interface);
+                }
+            }
+#endif
 
             for(auto const& interface : interfaces) {
                 if(!self->servers.contains(interface.to_string())) {
