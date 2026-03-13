@@ -92,7 +92,7 @@ private:
 
     asio::ip::udp::endpoint lastRecvEndpoint;
 
-    asio::io_service&                 ioc;
+    asio::io_context&                 ioc;
     asio::ip::udp::socket             send_socket;
     asio::ip::udp::socket             recv_socket;
     std::uint16_t                     port;
@@ -329,7 +329,7 @@ public:
 
 private:
     using Clock = std::chrono::steady_clock;
-    asio::io_service&                              ioc;
+    asio::io_context&                              ioc;
     std::uint16_t                                  port;
     std::string                                    multicastAddress;
     asio::basic_waitable_timer<Clock>              resolveTimer;
@@ -364,9 +364,7 @@ private:
 #endif
 
     void resolveAndAdd() {
-        asio::ip::tcp::resolver::query query(asio::ip::host_name(), "");
-
-        resolver.async_resolve(query, [self = this->shared_from_this()](auto error, auto endpoints) {
+        resolver.async_resolve(asio::ip::host_name(), "", [self = this->shared_from_this()](auto error, auto endpoints) {
             std::regex const ipv4Regex{
               R"(^(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$)"};
 
