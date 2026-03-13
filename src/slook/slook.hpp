@@ -31,7 +31,7 @@ struct Lookup {
 
     void messageCallback(slook::IPAddress const& address, std::span<std::byte const> data) {
         CommandSet command;
-        auto const ec = Packager::template unpack(data, command);
+        auto const ec = Packager::unpack(data, command);
 
         if(ec.has_value()) {
             std::visit([&](auto const& v) { handle(address, v); }, command);
@@ -83,7 +83,7 @@ private:
     template<typename T>
     void send(std::optional<slook::IPAddress> const& address, T const& v) {
         Vector<std::byte, 1024> buffer;
-        Packager::template pack(buffer, CommandSet{v});
+        Packager::pack(buffer, CommandSet{v});
         sendFunction(address, buffer);
     }
 
